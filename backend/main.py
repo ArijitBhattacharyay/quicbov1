@@ -683,18 +683,29 @@ async def search_api(
 
     # ── LIVE SCRAPING (ACCURATE DATA) ──
     print(f"[LIVE SEARCH] Running 4 scrapers for: {q} at {pincode}")
-    reports = await asyncio.to_thread(live_agent.run_all_parallel, pincode, q)
+    reports = await live_agent.run_all_parallel(pincode, q)
     
+    import re
+    def normalize_weight(w: str) -> str:
+        if not w or w == "—": return "—"
+        w = w.lower().strip()
+        w = re.sub(r'^\d+\s*pack\s*\(', '', w)
+        w = w.replace(')', '').strip()
+        w = re.sub(r'(\d+)\s+([a-zA-Z]+)', r'\1\2', w)
+        return w
+
     # ── AGGREGATE RESULTS ──
     grouped_products = []
     
     for report in reports:
         plat_lower = report.platform.lower()  # "blinkit" or "zepto"
         for p in report.products:
+            p_weight_norm = normalize_weight(p.weight)
             # Fuzzy match to group same products across platforms
             matched = False
             for g in grouped_products:
-                if fuzz.token_set_ratio(g["name"].lower(), p.name.lower()) > 85 and g["quantity"] == p.weight:
+                g_weight_norm = normalize_weight(g["quantity"])
+                if fuzz.token_set_ratio(g["name"].lower(), p.name.lower()) > 85 and g_weight_norm == p_weight_norm:
                     g["platforms"][plat_lower] = {
                         "price": p.price,
                         "delivery": p.delivery_time,

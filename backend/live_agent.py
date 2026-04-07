@@ -1,11 +1,12 @@
 import argparse
+import asyncio
 import re
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Optional
 
-from playwright.sync_api import Page, sync_playwright
+from playwright.async_api import Page, async_playwright
+from playwright_stealth import Stealth
 
 @dataclass
 class ProductResult:
@@ -54,40 +55,42 @@ def _parse_price(price_str: str) -> float:
 
 def _parse_delivery(del_str: str) -> int:
     try:
-        return int(re.search(r'(\d+)', del_str).group(1))
+        match = re.search(r'(\d+)', del_str)
+        return int(match.group(1)) if match else 20
     except:
         return 20
 
-def type_into(page: Page, selector: str, text: str, delay: int = 50) -> bool:
+async def type_into(page: Page, selector: str, text: str, delay: int = 50) -> bool:
     try:
         el = page.locator(selector).first
-        el.wait_for(state="visible", timeout=5000)
-        el.click()
-        page.wait_for_timeout(200)
-        el.triple_click()
-        page.keyboard.press("Control+a")
-        page.keyboard.press("Backspace")
-        el.type(text, delay=delay)
+        await el.wait_for(state="visible", timeout=5000)
+        await el.click()
+        await page.wait_for_timeout(200)
+        await el.dblclick() # Triple click isn't standard in async_api, dblclick + select all
+        await page.keyboard.press("Control+a")
+        await page.keyboard.press("Backspace")
+        await el.type(text, delay=delay)
         return True
     except Exception:
         return False
 
-def click_first_suggestion(page: Page, selectors: list[str]) -> bool:
+async def click_first_suggestion(page: Page, selectors: list[str]) -> bool:
     for sel in selectors:
         try:
             container = page.locator(sel)
-            container.first.wait_for(state="visible", timeout=4000)
-            container.first.click()
+            await container.first.wait_for(state="visible", timeout=4000)
+            await container.first.click()
             return True
         except Exception:
             pass
     return False
 
-def read_header_info(page: Page, pincode: str) -> tuple[str, str]:
+async def read_header_info(page: Page, pincode: str) -> tuple[str, str]:
     location_text = "—"
     delivery_time = "—"
     try:
-        header = page.locator("header").first.inner_text(timeout=4000)
+        header_el = page.locator("header").first
+        header = await header_el.inner_text(timeout=4000)
         for line in header.split("\n"):
             line = line.strip()
             if not line: continue
@@ -107,71 +110,71 @@ class BlinkitScraper:
     def __init__(self, page: Page):
         self.page = page
 
-    def set_location(self, pincode: str) -> tuple[str, str]:
-        self.page.goto(self.BASE_URL, wait_until="domcontentloaded", timeout=300000)
-        self.page.wait_for_timeout(2000)
+    async def set_location(self, pincode: str) -> tuple[str, str]:
+        await self.page.goto(self.BASE_URL, wait_until="domcontentloaded", timeout=60000)
+        await self.page.wait_for_timeout(2000)
 
         opened = False
         for sel in ["[data-testid='location-btn']", ".LocationBar__Main-sc", "text=Deliver to", "text=Select Location"]:
             try:
                 el = self.page.locator(sel).first
-                if el.is_visible(timeout=1500):
-                    el.click()
+                if await el.is_visible(timeout=1500):
+                    await el.click()
                     opened = True
                     break
             except Exception:
                 pass
         
-        self.page.wait_for_timeout(1200)
-        typed = type_into(self.page, "input[placeholder='search delivery location']", pincode)
+        await self.page.wait_for_timeout(1200)
+        typed = await type_into(self.page, "input[placeholder='search delivery location']", pincode)
         if not typed:
-            type_into(self.page, "input[placeholder*='delivery']", pincode)
+            await type_into(self.page, "input[placeholder*='delivery']", pincode)
 
-        self.page.wait_for_timeout(2000)
-        self.page.keyboard.press("ArrowDown")
-        self.page.wait_for_timeout(300)
-        self.page.keyboard.press("Enter")
+        await self.page.wait_for_timeout(2000)
+        await self.page.keyboard.press("ArrowDown")
+        await self.page.wait_for_timeout(300)
+        await self.page.keyboard.press("Enter")
 
         try:
-            self.page.wait_for_load_state("networkidle", timeout=8000)
+            await self.page.wait_for_load_state("networkidle", timeout=8000)
         except:
-            self.page.wait_for_timeout(3000)
+            await self.page.wait_for_timeout(3000)
 
-        return read_header_info(self.page, pincode)
+        return await read_header_info(self.page, pincode)
 
-    def search(self, product: str) -> list[ProductResult]:
+    async def search(self, product: str) -> list[ProductResult]:
         try:
-            self.page.locator("a[href='/s/']").first.click()
-            self.page.wait_for_timeout(600)
+            await self.page.locator("a[href='/s/']").first.click()
+            await self.page.wait_for_timeout(600)
         except:
             pass
 
-        typed = type_into(self.page, "input[placeholder='Search for atta dal and more']", product)
+        typed = await type_into(self.page, "input[placeholder='Search for atta dal and more']", product)
         if not typed:
-            typed = type_into(self.page, "input[type='search']", product)
+            typed = await type_into(self.page, "input[type='search']", product)
         
         if not typed:
-            self.page.goto(f"{self.BASE_URL}/s/?q={product.replace(' ', '%20')}", wait_until="domcontentloaded", timeout=300000)
+            await self.page.goto(f"{self.BASE_URL}/s/?q={product.replace(' ', '%20')}", wait_until="domcontentloaded", timeout=60000)
         else:
-            self.page.keyboard.press("Enter")
+            await self.page.keyboard.press("Enter")
 
         try:
-            self.page.wait_for_load_state("networkidle", timeout=8000)
+            await self.page.wait_for_load_state("networkidle", timeout=8000)
         except:
-            self.page.wait_for_timeout(2000)
+            await self.page.wait_for_timeout(2000)
 
-        for _ in range(4):
-            self.page.mouse.wheel(0, 900)
-            self.page.wait_for_timeout(400)
-        return self._extract_products()
+        for _ in range(3):
+            await self.page.mouse.wheel(0, 800)
+            await self.page.wait_for_timeout(400)
+        return await self._extract_products()
 
-    def _extract_products(self) -> list[ProductResult]:
+    async def _extract_products(self) -> list[ProductResult]:
         products = []
         cards = None
         for sel in ["[data-testid='product-card']", "div[role='button'][id]", "div[class*='tw-flex'][role='button']"]:
             try:
                 found = self.page.locator(sel)
-                if found.count() > 0:
+                if await found.count() > 0:
                     cards = found
                     break
             except:
@@ -179,20 +182,21 @@ class BlinkitScraper:
 
         if cards is None: return []
 
-        _, global_delivery = read_header_info(self.page, "")
+        _, global_delivery = await read_header_info(self.page, "")
         global_del_val = _parse_delivery(global_delivery)
 
-        for i in range(min(cards.count(), 15)):
+        count = await cards.count()
+        for i in range(min(count, 15)):
             try:
                 card = cards.nth(i)
-                full_text = card.inner_text(timeout=1500).strip()
+                full_text = (await card.inner_text(timeout=1500)).strip()
                 if not full_text: continue
                 lines = [l.strip() for l in full_text.split("\n") if l.strip()]
 
                 name = "—"
                 for sel in ["div.tw-line-clamp-2", "[class*='line-clamp']"]:
                     try:
-                        t = card.locator(sel).first.inner_text(timeout=400).strip()
+                        t = (await card.locator(sel).first.inner_text(timeout=400)).strip()
                         if t and not _is_garbage(t): name = t; break
                     except: pass
 
@@ -211,12 +215,11 @@ class BlinkitScraper:
                 discount = next((l for l in lines if "%" in l and "off" in l.lower()), "")
                 available = "out of stock" not in full_text.lower() and "notify" not in full_text.lower()
 
-                # Get the real image
                 image_url = ""
                 try:
                     img_el = card.locator("img").first
-                    if img_el.is_visible(timeout=500):
-                        image_url = img_el.get_attribute("src") or ""
+                    if await img_el.is_visible(timeout=500):
+                        image_url = await img_el.get_attribute("src") or ""
                 except: pass
 
                 if name != "—" and parsed_price > 0:
@@ -236,64 +239,59 @@ class ZeptoScraper:
     def __init__(self, page: Page):
         self.page = page
 
-    def set_location(self, pincode: str) -> tuple[str, str]:
-        self.page.goto(self.BASE_URL, wait_until="domcontentloaded", timeout=300000)
-        self.page.wait_for_timeout(2000)
+    async def set_location(self, pincode: str) -> tuple[str, str]:
+        await self.page.goto(self.BASE_URL, wait_until="domcontentloaded", timeout=60000)
+        await self.page.wait_for_timeout(2000)
 
         for sel in ["text=Select Location", "button[class*='location']", "text=Detect my location"]:
             try:
                 el = self.page.locator(sel).first
-                if el.is_visible(timeout=1500):
-                    el.click()
+                if await el.is_visible(timeout=1500):
+                    await el.click()
                     break
             except: pass
 
-        self.page.wait_for_timeout(1000)
-        typed = type_into(self.page, "input[placeholder='Search a new address']", pincode)
-        if not typed: typed = type_into(self.page, "input[type='text']", pincode)
+        await self.page.wait_for_timeout(1000)
+        typed = await type_into(self.page, "input[placeholder='Search a new address']", pincode)
+        if not typed: typed = await type_into(self.page, "input[type='text']", pincode)
 
-        self.page.wait_for_timeout(2000)
-        self.page.keyboard.press("ArrowDown")
-        self.page.wait_for_timeout(300)
-        self.page.keyboard.press("Enter")
+        await self.page.wait_for_timeout(2000)
+        await self.page.keyboard.press("ArrowDown")
+        await self.page.wait_for_timeout(300)
+        await self.page.keyboard.press("Enter")
 
         try:
-            self.page.wait_for_load_state("networkidle", timeout=8000)
+            await self.page.wait_for_load_state("networkidle", timeout=8000)
         except:
-            self.page.wait_for_timeout(2000)
+            await self.page.wait_for_timeout(2000)
 
-        return read_header_info(self.page, pincode)
+        return await read_header_info(self.page, pincode)
 
-    def search(self, product: str) -> list[ProductResult]:
+    async def search(self, product: str) -> list[ProductResult]:
+        search_url = f"{self.BASE_URL}/search?query={product.replace(' ', '+')}"
+        await self.page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
+        
+        # Explicitly wait for React to fetch and render actual search results over "Trending Items"
+        await self.page.wait_for_timeout(4000)
+        
         try:
-            self.page.locator("a[href='/search']").first.click()
-            self.page.wait_for_timeout(600)
-        except: pass
-
-        typed = type_into(self.page, "input[placeholder*='Search']", product)
-        if not typed:
-            self.page.goto(f"{self.BASE_URL}/search?query={product.replace(' ', '+')}", wait_until="domcontentloaded", timeout=300000)
-        else:
-            self.page.keyboard.press("Enter")
-
-        try:
-            self.page.wait_for_load_state("networkidle", timeout=8000)
+            await self.page.wait_for_load_state("networkidle", timeout=6000)
         except:
-            self.page.wait_for_timeout(2000)
+            pass
 
-        for _ in range(4):
-            self.page.mouse.wheel(0, 900)
-            self.page.wait_for_timeout(400)
+        for _ in range(3):
+            await self.page.mouse.wheel(0, 800)
+            await self.page.wait_for_timeout(400)
 
-        return self._extract_products()
+        return await self._extract_products()
 
-    def _extract_products(self) -> list[ProductResult]:
+    async def _extract_products(self) -> list[ProductResult]:
         products = []
         cards = None
         for sel in ["a[href^='/pn/']", "[data-testid='product-card']"]:
             try:
                 found = self.page.locator(sel)
-                if found.count() > 0:
+                if await found.count() > 0:
                     cards = found
                     break
             except: pass
@@ -302,17 +300,19 @@ class ZeptoScraper:
 
         global_delivery = 20
         try:
-            hdr = self.page.locator("header").first.inner_text(timeout=2000)
+            hdr_el = self.page.locator("header").first
+            hdr = await hdr_el.inner_text(timeout=2000)
             for line in hdr.split("\n"):
                 if "min" in line.lower() and len(line) < 30:
                     global_delivery = _parse_delivery(line)
                     break
         except: pass
 
-        for i in range(min(cards.count(), 15)):
+        count = await cards.count()
+        for i in range(min(count, 15)):
             try:
                 card = cards.nth(i)
-                full_text = card.inner_text(timeout=1500).strip()
+                full_text = (await card.inner_text(timeout=1500)).strip()
                 if not full_text: continue
                 lines = [l.strip() for l in full_text.split("\n") if l.strip()]
 
@@ -336,8 +336,8 @@ class ZeptoScraper:
                 image_url = ""
                 try:
                     img_el = card.locator("img").first
-                    if img_el.is_visible(timeout=500):
-                        image_url = img_el.get_attribute("src") or ""
+                    if await img_el.is_visible(timeout=500):
+                        image_url = await img_el.get_attribute("src") or ""
                 except: pass
 
                 if name != "—" and parsed_price > 0:
@@ -356,57 +356,54 @@ class BigBasketScraper:
     def __init__(self, page: Page):
         self.page = page
 
-    def set_location(self, pincode: str) -> tuple[str, str]:
-        self.page.goto(self.BASE_URL, wait_until="domcontentloaded", timeout=30000)
-        self.page.wait_for_timeout(2000)
-        # Bigbasket location is tricky headers, we will try to default to national or click header
+    async def set_location(self, pincode: str) -> tuple[str, str]:
+        await self.page.goto(self.BASE_URL, wait_until="domcontentloaded", timeout=60000)
+        await self.page.wait_for_timeout(2000)
         for sel in ["button[class*='Location']", "div[class*='AddressSelect']", "span[class*='Address']", "text=Select Location"]:
             try:
                 el = self.page.locator(sel).first
-                if el.is_visible(timeout=1000):
-                    el.click()
+                if await el.is_visible(timeout=1000):
+                    await el.click()
                     break
             except: pass
         
-        self.page.wait_for_timeout(1000)
-        type_into(self.page, "input[placeholder*='Search location'], input[placeholder*='Enter your city']", pincode)
-        self.page.wait_for_timeout(1500)
-        self.page.keyboard.press("ArrowDown")
-        self.page.wait_for_timeout(200)
-        self.page.keyboard.press("Enter")
-        self.page.wait_for_timeout(1500)
-        return read_header_info(self.page, pincode)
+        await self.page.wait_for_timeout(1000)
+        await type_into(self.page, "input[placeholder*='Search location'], input[placeholder*='Enter your city']", pincode)
+        await self.page.wait_for_timeout(1500)
+        await self.page.keyboard.press("ArrowDown")
+        await self.page.wait_for_timeout(200)
+        await self.page.keyboard.press("Enter")
+        await self.page.wait_for_timeout(1500)
+        return await read_header_info(self.page, pincode)
 
-    def search(self, product: str) -> list[ProductResult]:
-        self.page.goto(f"{self.BASE_URL}/custompage/sysgenpd/?type=pc&slug={product.replace(' ', '-')}", wait_until="domcontentloaded", timeout=300000)
-        # Use classic URL
-        self.page.goto(f"{self.BASE_URL}/search/?nc=as&q={product.replace(' ', '+')}", wait_until="domcontentloaded", timeout=300000)
+    async def search(self, product: str) -> list[ProductResult]:
+        await self.page.goto(f"{self.BASE_URL}/search/?nc=as&q={product.replace(' ', '+')}", wait_until="domcontentloaded", timeout=60000)
         
-        try: self.page.wait_for_load_state("networkidle", timeout=8000)
-        except: self.page.wait_for_timeout(2000)
+        try: await self.page.wait_for_load_state("networkidle", timeout=8000)
+        except: await self.page.wait_for_timeout(2000)
 
-        for _ in range(4):
-            self.page.mouse.wheel(0, 900)
-            self.page.wait_for_timeout(400)
-        return self._extract_products()
+        for _ in range(3):
+            await self.page.mouse.wheel(0, 800)
+            await self.page.wait_for_timeout(400)
+        return await self._extract_products()
 
-    def _extract_products(self) -> list[ProductResult]:
+    async def _extract_products(self) -> list[ProductResult]:
         products = []
         cards = None
         for sel in ["div[class*='SKUDeck___StyledDiv']", "a[href^='/pd/']", "li[class*='PaginateItems']"]:
             try:
                 found = self.page.locator(sel)
-                if found.count() > 0:
-                    cards = found
-                    break
+                if await found.count() > 0:
+                    cards = found; break
             except: pass
 
         if cards is None: return []
 
-        for i in range(min(cards.count(), 15)):
+        count = await cards.count()
+        for i in range(min(count, 15)):
             try:
                 card = cards.nth(i)
-                text = card.inner_text(timeout=1500).strip()
+                text = (await card.inner_text(timeout=1500)).strip()
                 if not text: continue
                 lines = [l.strip() for l in text.split("\n") if l.strip()]
 
@@ -428,8 +425,8 @@ class BigBasketScraper:
                 image_url = ""
                 try:
                     img_el = card.locator("img").first
-                    if img_el.is_visible(timeout=500):
-                        image_url = img_el.get_attribute("src") or ""
+                    if await img_el.is_visible(timeout=500):
+                        image_url = await img_el.get_attribute("src") or ""
                 except: pass
 
                 if name != "—" and parsed_price > 0:
@@ -447,44 +444,45 @@ class InstamartScraper:
     def __init__(self, page: Page):
         self.page = page
 
-    def set_location(self, pincode: str) -> tuple[str, str]:
-        self.page.goto("https://www.swiggy.com/", wait_until="domcontentloaded", timeout=300000)
-        self.page.wait_for_timeout(2000)
-        type_into(self.page, "input[id='location']", pincode)
-        self.page.wait_for_timeout(2000)
-        self.page.keyboard.press("ArrowDown")
-        self.page.wait_for_timeout(300)
-        self.page.keyboard.press("Enter")
-        self.page.wait_for_timeout(2000)
-        return read_header_info(self.page, pincode)
+    async def set_location(self, pincode: str) -> tuple[str, str]:
+        await self.page.goto("https://www.swiggy.com/", wait_until="domcontentloaded", timeout=60000)
+        await self.page.wait_for_timeout(2000)
+        await type_into(self.page, "input[id='location']", pincode)
+        await self.page.wait_for_timeout(2000)
+        await self.page.keyboard.press("ArrowDown")
+        await self.page.wait_for_timeout(300)
+        await self.page.keyboard.press("Enter")
+        await self.page.wait_for_timeout(2000)
+        return await read_header_info(self.page, pincode)
 
-    def search(self, product: str) -> list[ProductResult]:
-        self.page.goto(f"{self.BASE_URL}/search?custom_back=true&query={product.replace(' ', '+')}", wait_until="domcontentloaded", timeout=300000)
+    async def search(self, product: str) -> list[ProductResult]:
+        await self.page.goto(f"{self.BASE_URL}/search?custom_back=true&query={product.replace(' ', '+')}", wait_until="domcontentloaded", timeout=60000)
         
-        try: self.page.wait_for_load_state("networkidle", timeout=6000)
-        except: self.page.wait_for_timeout(2000)
+        try: await self.page.wait_for_load_state("networkidle", timeout=6000)
+        except: await self.page.wait_for_timeout(2000)
 
-        for _ in range(4):
-            self.page.mouse.wheel(0, 900)
-            self.page.wait_for_timeout(400)
-        return self._extract_products()
+        for _ in range(3):
+            await self.page.mouse.wheel(0, 800)
+            await self.page.wait_for_timeout(400)
+        return await self._extract_products()
 
-    def _extract_products(self) -> list[ProductResult]:
+    async def _extract_products(self) -> list[ProductResult]:
         products = []
         cards = None
         for sel in ["div[data-testid='item-card']", "div[class*='ItemCard']", "div[class*='ProductList'] > div"]:
             try:
                 found = self.page.locator(sel)
-                if found.count() > 0:
+                if await found.count() > 0:
                     cards = found; break
             except: pass
 
         if cards is None: return []
 
-        for i in range(min(cards.count(), 15)):
+        count = await cards.count()
+        for i in range(min(count, 15)):
             try:
                 card = cards.nth(i)
-                text = card.inner_text(timeout=1500).strip()
+                text = (await card.inner_text(timeout=1500)).strip()
                 if not text: continue
                 lines = [l.strip() for l in text.split("\n") if l.strip()]
 
@@ -502,8 +500,8 @@ class InstamartScraper:
                 image_url = ""
                 try:
                     img_el = card.locator("img").first
-                    if img_el.is_visible(timeout=500):
-                        image_url = img_el.get_attribute("src") or ""
+                    if await img_el.is_visible(timeout=500):
+                        image_url = await img_el.get_attribute("src") or ""
                 except: pass
 
                 if name != "—" and parsed_price > 0:
@@ -516,94 +514,79 @@ class InstamartScraper:
             except: pass
         return products
 
-def _new_context(pw, headless: bool):
-    browser = pw.chromium.launch(headless=headless, slow_mo=0)
-    ctx = browser.new_context(viewport={"width": 1440, "height": 900})
-    ctx.set_default_timeout(300000)  # Set 5 mins global timeout
-    return browser, ctx
-
-def run_blinkit(pincode: str, product: str) -> TestReport:
+async def run_blinkit(pincode: str, product: str) -> TestReport:
     report = TestReport(platform="blinkit", pincode=pincode, location="—", delivery_time="—", product_query=product)
-    try:
-        with sync_playwright() as pw:
-            browser, ctx = _new_context(pw, True)
-            try:
-                page = ctx.new_page()
-                s = BlinkitScraper(page)
-                s.set_location(pincode)
-                report.products = s.search(product)
-            except Exception as e:
-                report.error = str(e)
-            finally:
-                browser.close()
-    except Exception as e:
-        report.error = f"Browser Error: {e}"
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=False, args=['--disable-blink-features=AutomationControlled'])
+        try:
+            ctx = await browser.new_context(viewport={"width": 1440, "height": 900}, user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            page = await ctx.new_page()
+            await Stealth().apply_stealth_async(page)
+            s = BlinkitScraper(page)
+            report.location, report.delivery_time = await s.set_location(pincode)
+            report.products = await s.search(product)
+        except Exception as e:
+            report.error = str(e)
+        finally:
+            await browser.close()
     return report
 
-def run_zepto(pincode: str, product: str) -> TestReport:
+async def run_zepto(pincode: str, product: str) -> TestReport:
     report = TestReport(platform="zepto", pincode=pincode, location="—", delivery_time="—", product_query=product)
-    try:
-        with sync_playwright() as pw:
-            browser, ctx = _new_context(pw, True)
-            try:
-                page = ctx.new_page()
-                s = ZeptoScraper(page)
-                s.set_location(pincode)
-                report.products = s.search(product)
-            except Exception as e:
-                report.error = str(e)
-            finally:
-                browser.close()
-    except Exception as e:
-        report.error = f"Browser Error: {e}"
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=False, args=['--disable-blink-features=AutomationControlled'])
+        try:
+            ctx = await browser.new_context(viewport={"width": 1440, "height": 900}, user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            page = await ctx.new_page()
+            await Stealth().apply_stealth_async(page)
+            s = ZeptoScraper(page)
+            report.location, report.delivery_time = await s.set_location(pincode)
+            report.products = await s.search(product)
+        except Exception as e:
+            report.error = str(e)
+        finally:
+            await browser.close()
     return report
 
-def run_bigbasket(pincode: str, product: str) -> TestReport:
+async def run_bigbasket(pincode: str, product: str) -> TestReport:
     report = TestReport(platform="bigbasket", pincode=pincode, location="—", delivery_time="—", product_query=product)
-    try:
-        with sync_playwright() as pw:
-            browser, ctx = _new_context(pw, True)
-            try:
-                page = ctx.new_page()
-                s = BigBasketScraper(page)
-                s.set_location(pincode)
-                report.products = s.search(product)
-            except Exception as e:
-                report.error = str(e)
-            finally:
-                browser.close()
-    except Exception as e:
-        report.error = f"Browser Error: {e}"
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=False, args=['--disable-blink-features=AutomationControlled'])
+        try:
+            ctx = await browser.new_context(viewport={"width": 1440, "height": 900}, user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            page = await ctx.new_page()
+            await Stealth().apply_stealth_async(page)
+            s = BigBasketScraper(page)
+            report.location, report.delivery_time = await s.set_location(pincode)
+            report.products = await s.search(product)
+        except Exception as e:
+            report.error = str(e)
+        finally:
+            await browser.close()
     return report
 
-def run_instamart(pincode: str, product: str) -> TestReport:
+async def run_instamart(pincode: str, product: str) -> TestReport:
     report = TestReport(platform="instamart", pincode=pincode, location="—", delivery_time="—", product_query=product)
-    try:
-        with sync_playwright() as pw:
-            browser, ctx = _new_context(pw, True)
-            try:
-                page = ctx.new_page()
-                s = InstamartScraper(page)
-                s.set_location(pincode)
-                report.products = s.search(product)
-            except Exception as e:
-                report.error = str(e)
-            finally:
-                browser.close()
-    except Exception as e:
-        report.error = f"Browser Error: {e}"
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=False, args=['--disable-blink-features=AutomationControlled'])
+        try:
+            ctx = await browser.new_context(viewport={"width": 1440, "height": 900}, user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            page = await ctx.new_page()
+            await Stealth().apply_stealth_async(page)
+            s = InstamartScraper(page)
+            report.location, report.delivery_time = await s.set_location(pincode)
+            report.products = await s.search(product)
+        except Exception as e:
+            report.error = str(e)
+        finally:
+            await browser.close()
     return report
 
-def run_all_parallel(pincode: str, product: str) -> list[TestReport]:
-    results = [None, None, None, None]
-    # Scraping all 4 simultaneously!
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        future_b = pool.submit(run_blinkit, pincode, product)
-        future_z = pool.submit(run_zepto, pincode, product)
-        future_bb = pool.submit(run_bigbasket, pincode, product)
-        future_i = pool.submit(run_instamart, pincode, product)
-        results[0] = future_b.result()
-        results[1] = future_z.result()
-        results[2] = future_bb.result()
-        results[3] = future_i.result()
-    return [r for r in results if r is not None]
+async def run_all_parallel(pincode: str, product: str) -> list[TestReport]:
+    tasks = [
+        run_blinkit(pincode, product),
+        run_zepto(pincode, product),
+        run_bigbasket(pincode, product),
+        run_instamart(pincode, product)
+    ]
+    return list(await asyncio.gather(*tasks))
