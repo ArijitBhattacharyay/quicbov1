@@ -758,6 +758,22 @@ async def prewarm_endpoint(pincode: str = Query(..., min_length=6, max_length=6)
     return {"pincode": pincode, "location": loc.get("full_label", pincode), "status": status}
 
 
+@app.post("/api/prewarm-geo")
+async def prewarm_geo_endpoint(lat: float = Query(...), lng: float = Query(...)):
+    """
+    Pre-warm via Coordinates: sets GPS in all 3 platform browsers and clicks 'Detect Location'.
+    Syncs the user's browser location with the scrapers for maximum accuracy.
+    """
+    status = await live_agent.prewarm_location_geo(lat, lng)
+    # Reverse geocode locally just for the return label
+    try:
+        loc = await reverse_geocode(lat, lng)
+        label = loc.get("full_label", f"{lat},{lng}")
+    except:
+        label = f"{lat},{lng}"
+    return {"lat": lat, "lng": lng, "location": label, "status": status}
+
+
 @app.get("/api/search")
 async def search_api(
     q: str = Query(..., min_length=1),

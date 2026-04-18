@@ -75,6 +75,16 @@ export async function prewarmLocation(pincode) {
   }
 }
 
+export async function prewarmLocationGeo(lat, lng) {
+  try {
+    const res = await api.post(`/api/prewarm-geo?lat=${lat}&lng=${lng}`);
+    return res.data;
+  } catch (e) {
+    console.warn('[prewarm-geo] failed:', e?.message);
+    return null;
+  }
+}
+
 export async function getHealth() {
   const res = await api.get('/api/health');
   return res.data;

@@ -113,6 +113,7 @@ async def _launch_browser(pid: str):
         ctx = await browser.new_context(
             viewport={"width": 1440, "height": 900},
             user_agent=UA,
+            permissions=['geolocation'],
         )
         page = await ctx.new_page()
         # Improved stealth JS to evade detection in headless mode
@@ -134,10 +135,46 @@ def _get_page(pid: str) -> Optional[Page]:
     return _pages.get(pid)
 
 
+async def prewarm_location_geo(lat: float, lng: float):
+    """Sets geolocation on all browsers and triggers detection in parallel."""
+    if not _ready: return {"error": "browsers-not-ready"}
+    print(f"[live_agent] Prewarming location via GPS: {lat}, {lng}")
+    
+    tasks = []
+    for pid in PLATFORM_IDS:
+        tasks.append(asyncio.create_task(_set_platform_geo(pid, lat, lng)))
+    
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    status = {}
+    for pid, res in zip(PLATFORM_IDS, results):
+        if isinstance(res, Exception):
+            print(f"[live_agent] {pid} geo-set failed: {res}")
+            status[pid] = f"error: {str(res)}"
+        else:
+            status[pid] = "ok"
+    return status
+
+
+async def _set_platform_geo(pid: str, lat: float, lng: float):
+    ctx = _contexts.get(pid)
+    page = _pages.get(pid)
+    if not ctx or not page: return
+    
+    await ctx.set_geolocation({"latitude": lat, "longitude": lng})
+    scraper = None
+    if pid == "blinkit": scraper = BlinkitScraper(page)
+    elif pid == "zepto": scraper = ZeptoScraper(page)
+    elif pid == "bigbasket": scraper = BigBasketScraper(page)
+    
+    if scraper and hasattr(scraper, "set_location_geo"):
+        await scraper.set_location_geo()
+
+
 # ── Shared helper functions (mirrors grocery_agent.py) ─────────────────────────
 _REVIEW_PATTERN = re.compile(r'^\(\d+[\d.,]*[kKmM]?\)$')
 _UI_WORDS = {"ADD", "REMOVE", "BUY", "LOGIN", "CART", "SEARCH",
-             "CLOSE", "CANCEL", "OK", "DONE", "SELECT", "CONFIRM"}
+             "CLOSE", "CANCEL", "OK", "DONE", "SELECT", "CONFIRM",
+             "USE MY CURRENT LOCATION", "DETECT MY LOCATION", "SET LOCATION"}
 
 
 def _is_garbage(text: str) -> bool:
@@ -406,6 +443,37 @@ class BlinkitScraper:
         await self.page.wait_for_timeout(2000)
         print(f"[blinkit] location set ✓")
 
+    async def set_location_geo(self) -> None:
+        """Uses GPS coordinates + 'Detect my location' button."""
+        print(f"[blinkit] set_location_geo")
+        await self.page.goto(self.BASE_URL, wait_until="domcontentloaded")
+        
+        # Try Memory Click First
+        saved_sel = selector_memory.get_selector("blinkit", "geo_btn")
+        if saved_sel:
+            try:
+                el = self.page.locator(saved_sel).first
+                if await el.is_visible(timeout=1000):
+                    await el.click(force=True); print("[Intelligence] Blinkit: used learned geo button ✓"); return
+            except: selector_memory.invalidate("blinkit", "geo_btn")
+
+        # Heuristic Search
+        for trigger_sel in ["button[aria-label*='location']", "div[class*='location']"]:
+            try:
+                el = self.page.locator(trigger_sel).first
+                if await el.is_visible(timeout=1000): await el.click(force=True); break
+            except: pass
+            
+        for sel in ["text=Detect my location", "text=Use my current location", "button[class*='Detect']"]:
+            try:
+                el = self.page.locator(sel).first
+                if await el.is_visible(timeout=2000):
+                    await el.click(force=True)
+                    selector_memory.learn("blinkit", "geo_btn", sel)
+                    print("[blinkit] geo button clicked ✓")
+                    return
+            except: pass
+
     async def search(self, product: str) -> list[ProductResult]:
         captured_results = []
         async def handle_response(response):
@@ -603,6 +671,36 @@ class ZeptoScraper:
         await self.page.wait_for_timeout(500)
         print(f"[zepto] location set ✓")
 
+    async def set_location_geo(self) -> None:
+        """Uses GPS coordinates + 'Use My Current Location' button."""
+        print(f"[zepto] set_location_geo")
+        await self.page.goto(self.BASE_URL, wait_until="domcontentloaded")
+        
+        # Try Memory Click First
+        saved_sel = selector_memory.get_selector("zepto", "geo_btn")
+        if saved_sel:
+            try:
+                el = self.page.locator(saved_sel).first
+                if await el.is_visible(timeout=1000):
+                    await el.click(force=True); print("[Intelligence] Zepto: used learned geo button ✓"); return
+            except: selector_memory.invalidate("zepto", "geo_btn")
+
+        for trigger_sel in ["span[class*='Location']", "div[class*='Search']", "button[aria-label*='location']"]:
+            try:
+                el = self.page.locator(trigger_sel).first
+                if await el.is_visible(timeout=1000): await el.click(force=True); break
+            except: pass
+
+        for sel in ["text=Use My Current Location", "text=Detect My Location", "div[class*='CurrentLocation']"]:
+            try:
+                el = self.page.locator(sel).first
+                if await el.is_visible(timeout=2000):
+                    await el.click(force=True)
+                    selector_memory.learn("zepto", "geo_btn", sel)
+                    print("[zepto] geo button clicked ✓")
+                    return
+            except: pass
+
     async def search(self, product: str) -> list[ProductResult]:
         captured_results = []
         async def handle_response(response):
@@ -789,6 +887,36 @@ class BigBasketScraper:
         await _pick_first_suggestion(self.page, match_text=pincode)
         await self.page.wait_for_timeout(2500)
         print(f"[bigbasket] location set ✓")
+
+    async def set_location_geo(self) -> None:
+        """Uses GPS coordinates + 'Use My Current Location' button."""
+        print(f"[bigbasket] set_location_geo")
+        await self.page.goto(self.BASE_URL, wait_until="domcontentloaded")
+        
+        # Try Memory Click First
+        saved_sel = selector_memory.get_selector("bigbasket", "geo_btn")
+        if saved_sel:
+            try:
+                el = self.page.locator(saved_sel).first
+                if await el.is_visible(timeout=1000):
+                    await el.click(force=True); print("[Intelligence] BigBasket: used learned geo button ✓"); return
+            except: selector_memory.invalidate("bigbasket", "geo_btn")
+
+        for trigger_sel in ["button[class*='Location']", "span[class*='Address']", "text=Select Location"]:
+            try:
+                el = self.page.locator(trigger_sel).first
+                if await el.is_visible(timeout=1000): await el.click(force=True); break
+            except: pass
+
+        for sel in ["text=Use My Current Location", "text=Detect location", "div[class*='CurrentLocation']"]:
+            try:
+                el = self.page.locator(sel).first
+                if await el.is_visible(timeout=2000):
+                    await el.click(force=True)
+                    selector_memory.learn("bigbasket", "geo_btn", sel)
+                    print("[bigbasket] geo button clicked ✓")
+                    return
+            except: pass
 
     async def search(self, product: str) -> list[ProductResult]:
         print(f"[bigbasket] search: {product}")

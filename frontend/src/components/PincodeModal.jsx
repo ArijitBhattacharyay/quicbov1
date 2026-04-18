@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
-import { MapPin, X } from 'lucide-react';
-import { getPincodeInfo } from '../api';
+import { MapPin, X, Navigation } from 'lucide-react';
+import { getPincodeInfo, reverseGeocode } from '../api';
 
 export default function PincodeModal({ currentPincode, onConfirm, onClose }) {
   const [input, setInput] = useState(currentPincode || '');
   const [loading, setLoading] = useState(false);
+  const [geoLoading, setGeoLoading] = useState(false);
   const [error, setError] = useState('');
   const [locationResult, setLocationResult] = useState(null);
+  const [geoCoords, setGeoCoords] = useState(null);
 
   // Close on Escape key
   useEffect(() => {
@@ -24,6 +26,7 @@ export default function PincodeModal({ currentPincode, onConfirm, onClose }) {
     setError('');
     setLoading(true);
     setLocationResult(null);
+    setGeoCoords(null);
     try {
       const data = await getPincodeInfo(val);
       setLocationResult(data);
@@ -34,13 +37,46 @@ export default function PincodeModal({ currentPincode, onConfirm, onClose }) {
     }
   };
 
+  const handleGeoLocation = () => {
+    if (!navigator.geolocation) {
+      setError('Geolocation is not supported by your browser.');
+      return;
+    }
+
+    setGeoLoading(true);
+    setError('');
+    setLocationResult(null);
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        setGeoCoords({ lat: latitude, lng: longitude });
+        try {
+          const data = await reverseGeocode(latitude, longitude);
+          setLocationResult(data);
+          setInput(data.pincode);
+        } catch (err) {
+          setError('Could not detect your exact address. Please enter pincode manually.');
+        } finally {
+          setGeoLoading(false);
+        }
+      },
+      (err) => {
+        setGeoLoading(false);
+        if (err.code === 1) setError('Location permission denied.');
+        else setError('Could not retrieve your location.');
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
   const handleKeyDown = (e) => {
     if (e.key === 'Enter') handleLookup();
   };
 
   const handleConfirm = () => {
     if (locationResult) {
-      onConfirm(locationResult.pincode, locationResult.full_label);
+      onConfirm(locationResult.pincode, locationResult.full_label, geoCoords);
     }
   };
 
@@ -59,6 +95,35 @@ export default function PincodeModal({ currentPincode, onConfirm, onClose }) {
         </div>
         <p className="modal__sub">Enter your 6-digit pincode to see prices and delivery times in your area.</p>
 
+        {/* Detect Location Button */}
+        {!locationResult && !loading && (
+          <button 
+            className="modal__geo-btn" 
+            onClick={handleGeoLocation}
+            disabled={geoLoading}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              padding: '12px',
+              background: '#f8f9fa',
+              border: '1px solid #dee2e6',
+              borderRadius: '10px',
+              fontSize: '14px',
+              fontWeight: 600,
+              color: '#FF6B00',
+              cursor: 'pointer',
+              marginBottom: '16px',
+              transition: 'all 0.2s'
+            }}
+          >
+            <Navigation size={16} fill={geoLoading ? 'none' : '#FF6B00'} />
+            {geoLoading ? 'Detecting location...' : 'Use Current Location'}
+          </button>
+        )}
+
         {/* Input Row */}
         <div className="modal__input-row">
           <input
@@ -72,6 +137,7 @@ export default function PincodeModal({ currentPincode, onConfirm, onClose }) {
               setInput(e.target.value.replace(/\D/, ''));
               setError('');
               setLocationResult(null);
+              setGeoCoords(null);
             }}
             onKeyDown={handleKeyDown}
             autoFocus
@@ -80,7 +146,7 @@ export default function PincodeModal({ currentPincode, onConfirm, onClose }) {
           <button
             className="modal__btn"
             onClick={handleLookup}
-            disabled={loading || input.length !== 6}
+            disabled={loading || geoLoading || input.length !== 6}
           >
             {loading ? '...' : 'Check'}
           </button>
@@ -97,7 +163,7 @@ export default function PincodeModal({ currentPincode, onConfirm, onClose }) {
                   {locationResult.district || locationResult.city}, {locationResult.state}
                 </p>
                 <p style={{ fontSize: 11, color: '#4b7a34', marginTop: 2 }}>
-                  Pincode: {locationResult.pincode}
+                  Pincode: {locationResult.pincode} {geoCoords && '• GPS Verified'}
                 </p>
               </div>
             </div>

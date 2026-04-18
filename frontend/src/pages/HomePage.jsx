@@ -150,23 +150,39 @@ export default function HomePage({ cartCount, onAddToCart, onCartClick, onLoginC
     search(query, pincode);
   };
 
-  const handlePincodeConfirm = (code, label) => {
+  const handlePincodeConfirm = async (code, label, geoCoords = null) => {
     setPincode(code);
     setLocationLabel(label);
     setShowPincodeModal(false);
     toast.success(`📍 Location set to ${label}`);
-    // Pre-warm: set location on all 4 browsers immediately in background
-    toast.loading('⚡ Setting up your location on all platforms...', {
-      id: 'prewarm',
-      duration: 2000,
-    });
-    prewarmLocation(code).then(result => {
+    
+    // Pre-warm: set location on all platforms immediately in background
+    toast.loading(
+      geoCoords 
+        ? '⚡ Syncing your exact location with all platforms...' 
+        : '⚡ Setting up your location on all platforms...', 
+      { id: 'prewarm', duration: 2000 }
+    );
+
+    try {
+      let result;
+      if (geoCoords) {
+        // Sync via GPS Coordinates for 100% accuracy
+        result = await prewarmLocationGeo(geoCoords.lat, geoCoords.lng);
+      } else {
+        // Sync via Pincode
+        result = await prewarmLocation(code);
+      }
+
       if (result) {
         toast.success('✅ All platforms ready! Search will be fast.', { id: 'prewarm', duration: 3000 });
       } else {
         toast.dismiss('prewarm');
       }
-    });
+    } catch (err) {
+      console.error('Prewarm failed', err);
+      toast.error('Could not sync location automatically.', { id: 'prewarm' });
+    }
   };
 
   const handleAddToCart = (product) => {
