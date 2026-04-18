@@ -38,5 +38,13 @@ export function useSearch() {
     }
   }, []);
 
-  return { results, loading, error, search, lastQuery, cached, searchKey };
+  const reset = useCallback(() => {
+    setResults(null);
+    setLoading(false);
+    setError(null);
+    setLastQuery('');
+    setSearchKey(k => k + 1);
+  }, []);
+
+  return { results, loading, error, search, reset, lastQuery, cached, searchKey };
 }

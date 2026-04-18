@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Toaster, toast } from 'react-hot-toast';
 import Navbar from '../components/Navbar';
 import ProductGrid from '../components/ProductGrid';
@@ -6,6 +6,7 @@ import PincodeModal from '../components/PincodeModal';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import { useSearch } from '../hooks/useSearch';
 import { ShoppingCart } from 'lucide-react';
+import { prewarmLocation } from '../api';
 
 const PLATFORMS = [
   { id: 'blinkit',   label: 'Blinkit',          color: '#F8D000', emoji: '🟡' },
@@ -131,26 +132,20 @@ function AnimatedHero({ onSearch }) {
           ))}
         </div>
       </div>
-
-      <style>{`
-        @keyframes slowZoom {
-          0% { transform: scale(1) translate(0, 0); }
-          100% { transform: scale(1.05) translate(-10px, -5px); }
-        }
-        @keyframes floatBadge {
-          0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(-8px); }
-        }
-      `}</style>
     </div>
   );
 }
 
-export default function HomePage({ cartCount, onAddToCart, onCartClick, onLoginClick }) {
+export default function HomePage({ cartCount, onAddToCart, onCartClick, onLoginClick, initialPincode, initialLocation }) {
   const [showPincodeModal, setShowPincodeModal] = useState(false);
-  const [pincode, setPincode] = useState('110021');
-  const [locationLabel, setLocationLabel] = useState('Delhi 110021');
-  const { results, loading, error, search, lastQuery, cached } = useSearch();
+  const [pincode, setPincode] = useState(initialPincode || '110021');
+  const [locationLabel, setLocationLabel] = useState(initialLocation || 'Delhi 110021');
+  const { results, loading, error, search, reset, lastQuery, cached, searchKey } = useSearch();
+
+  useEffect(() => {
+    if (initialPincode) setPincode(initialPincode);
+    if (initialLocation) setLocationLabel(initialLocation);
+  }, [initialPincode, initialLocation]);
 
   const handleSearch = (query) => {
     search(query, pincode);
@@ -161,6 +156,18 @@ export default function HomePage({ cartCount, onAddToCart, onCartClick, onLoginC
     setLocationLabel(label);
     setShowPincodeModal(false);
     toast.success(`📍 Location set to ${label}`);
+    // Pre-warm: set location on all 4 browsers immediately in background
+    toast.loading('⚡ Setting up your location on all platforms...', {
+      id: 'prewarm',
+      duration: 2000,
+    });
+    prewarmLocation(code).then(result => {
+      if (result) {
+        toast.success('✅ All platforms ready! Search will be fast.', { id: 'prewarm', duration: 3000 });
+      } else {
+        toast.dismiss('prewarm');
+      }
+    });
   };
 
   const handleAddToCart = (product) => {
@@ -175,7 +182,7 @@ export default function HomePage({ cartCount, onAddToCart, onCartClick, onLoginC
     <>
       <Toaster position="top-right" toastOptions={{ duration: 2000 }} />
 
-      <Navbar pincode={pincode} location={locationLabel} onLocationClick={() => setShowPincodeModal(true)} onSearch={handleSearch} onLoginClick={onLoginClick} />
+      <Navbar pincode={pincode} location={locationLabel} onLocationClick={() => setShowPincodeModal(true)} onLogoClick={reset} onSearch={handleSearch} onLoginClick={onLoginClick} />
 
       {/* Cart FAB */}
       {cartCount > 0 && (
@@ -198,10 +205,14 @@ export default function HomePage({ cartCount, onAddToCart, onCartClick, onLoginC
               <p className="search-status__title">🔍 Searching across platforms...</p>
               <p className="search-status__sub">Comparing prices on all 4 platforms</p>
               <div className="platform-loading-list">
-                {PLATFORMS.map(p => (
-                  <div className="platform-loading-item" key={p.id}>
+                {PLATFORMS.map((p, i) => (
+                  <div
+                    className="platform-loading-item"
+                    key={p.id}
+                    style={{ animationDelay: `${i * 0.2}s` }}
+                  >
                     <div className="spinner" style={{ borderTopColor: p.color }} />
-                    <span style={{ color: '#5f6368' }}>{p.label}</span>
+                    <span style={{ color: p.color, fontWeight: 600 }}>{p.label}</span>
                   </div>
                 ))}
               </div>
@@ -218,15 +229,22 @@ export default function HomePage({ cartCount, onAddToCart, onCartClick, onLoginC
               <h1>Results for "{lastQuery}" {cached && <span style={{ fontSize: 11, background: '#e8f0fe', color: '#1A73E8', padding: '2px 8px', borderRadius: 10, marginLeft: 8 }}>cached</span>}</h1>
               <p>{results.total} products · {results.location}</p>
             </div>
-            <ProductGrid products={results.products} loading={false} onAddToCart={handleAddToCart} />
+            <ProductGrid key={searchKey} products={results.products} loading={false} onAddToCart={handleAddToCart} />
           </>
         )}
 
         {noResults && !loading && (
           <div className="empty-state">
-            <div className="empty-state__icon">🔎</div>
-            <h2>No products found for "{lastQuery}"</h2>
-            <p className="empty-state__text">Try: amul, milk, bread, ghee, paneer, rice, maggi, oil</p>
+            <span className="empty-state__icon">🔎</span>
+            <h2 className="empty-state__title">No results for "{lastQuery}"</h2>
+            <p className="empty-state__text">Try searching one of these popular items:</p>
+            <div className="empty-state__chips">
+              {['amul', 'milk', 'bread', 'eggs', 'ghee', 'paneer', 'rice', 'maggi', 'oil'].map(s => (
+                <button key={s} className="empty-state__chip" onClick={() => handleSearch(s)}>
+                  {s}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 

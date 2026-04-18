@@ -705,7 +705,11 @@ async def search_api(
             matched = False
             for g in grouped_products:
                 g_weight_norm = normalize_weight(g["quantity"])
-                if fuzz.token_set_ratio(g["name"].lower(), p.name.lower()) > 85 and g_weight_norm == p_weight_norm:
+                
+                # If either weight is unknown/fallback, or if they match exactly
+                weight_match = (g_weight_norm == "—" or p_weight_norm == "—" or g_weight_norm == p_weight_norm)
+                
+                if fuzz.token_set_ratio(g["name"].lower(), p.name.lower()) > 75 and weight_match:
                     g["platforms"][plat_lower] = {
                         "price": p.price,
                         "delivery": p.delivery_time,

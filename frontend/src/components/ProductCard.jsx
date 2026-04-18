@@ -101,8 +101,10 @@ export default function ProductCard({ product, onAddToCart }) {
 
   const bestPlatform = best_offer ? getPlatform(best_offer.platform) : null;
 
-  // All offers except the best one for the dropdown
-  const otherOffers = all_offers || [];
+  // Filter out the best offer from the dropdown so we don't display it twice
+  const otherOffers = all_offers
+    ? all_offers.filter((o) => o.platform !== best_offer?.platform)
+    : [];
 
   return (
     <div className="product-card">

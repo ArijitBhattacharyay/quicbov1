@@ -1,10 +1,11 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
+import { ArrowLeft, Zap, Trophy, ShoppingBag } from 'lucide-react';
 
 const PLATFORM_COLORS = {
-  blinkit:   { bg: '#FEF08A', accent: '#ca8a04', label: 'Blinkit',         short: 'BL' },
-  zepto:     { bg: '#EDE9FE', accent: '#7c3aed', label: 'Zepto',           short: 'ZP' },
-  instamart: { bg: '#FFEDD5', accent: '#ea580c', label: 'Swiggy Instamart',short: 'SM' },
-  bigbasket: { bg: '#DCFCE7', accent: '#16a34a', label: 'BigBasket',       short: 'BB' },
+  blinkit:   { bg: '#FFFBEB', accent: '#b45309', border: '#FCD34D', label: 'Blinkit',         short: 'BL' },
+  zepto:     { bg: '#F5F3FF', accent: '#7c3aed', border: '#C4B5FD', label: 'Zepto',           short: 'ZP' },
+  instamart: { bg: '#FFF7ED', accent: '#ea580c', border: '#FED7AA', label: 'Swiggy Instamart',short: 'SM' },
+  bigbasket: { bg: '#F0FDF4', accent: '#16a34a', border: '#86EFAC', label: 'BigBasket',       short: 'BB' },
 };
 
 const PLATFORMS = ['blinkit', 'zepto', 'instamart', 'bigbasket'];
@@ -75,7 +76,14 @@ export default function CartPage({ cartItems, onBack, onRemove }) {
     <div style={{ minHeight: '100vh', background: 'var(--bg-main)', fontFamily: 'Inter,sans-serif' }}>
       {/* Header */}
       <div style={{ background: '#fff', boxShadow: '0 1px 8px rgba(0,0,0,.08)', padding: '14px 24px', display: 'flex', alignItems: 'center', gap: 16, position: 'sticky', top: 0, zIndex: 50 }}>
-        <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20 }}>←</button>
+        <button
+          onClick={onBack}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#374151', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 6, borderRadius: 8, transition: 'background 0.2s' }}
+          onMouseEnter={e => e.currentTarget.style.background = '#f3f4f6'}
+          onMouseLeave={e => e.currentTarget.style.background = 'none'}
+        >
+          <ArrowLeft size={20} />
+        </button>
         <span style={{ fontWeight: 800, fontSize: 20, color: '#FF6B00', letterSpacing: '-1px' }}>quicbo</span>
         <span style={{ fontWeight: 600, color: '#374151', fontSize: 15 }}>/ Cart Comparison</span>
         <span style={{ marginLeft: 'auto', background: '#FF6B00', color: '#fff', borderRadius: 20, padding: '2px 12px', fontSize: 13, fontWeight: 600 }}>{cartItems.length} items</span>
@@ -90,19 +98,27 @@ export default function CartPage({ cartItems, onBack, onRemove }) {
             const isBest = pt.total === platformTotals[0].total && pt.allAvail;
             const isFastest = pt.platform === fastestPlatform.platform;
             return (
-              <div key={pt.platform} style={{ background: '#fff', borderRadius: 14, padding: '16px 18px', border: `2px solid ${isBest ? '#FF6B00' : '#f0f0f0'}`, position: 'relative', boxShadow: isBest ? '0 4px 20px rgba(255,107,0,.15)' : '0 1px 6px rgba(0,0,0,.06)' }}>
-                {isBest && <span style={{ position: 'absolute', top: -10, left: 16, background: '#FF6B00', color: '#fff', fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20 }}>🏆 BEST DEAL</span>}
-                {isFastest && !isBest && <span style={{ position: 'absolute', top: -10, left: 16, background: '#8025FB', color: '#fff', fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20 }}>⚡ FASTEST</span>}
+              <div key={pt.platform} style={{
+                background: isBest ? c.bg : '#fff',
+                borderRadius: 14,
+                padding: '16px 18px',
+                border: `2px solid ${isBest ? c.border : c.border + '66'}`,
+                position: 'relative',
+                boxShadow: isBest ? `0 4px 20px ${c.accent}22` : '0 1px 6px rgba(0,0,0,.06)',
+                transition: 'transform 0.2s, box-shadow 0.2s',
+              }}>
+                {isBest && <span style={{ position: 'absolute', top: -10, left: 16, background: c.accent, color: '#fff', fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, display: 'flex', alignItems: 'center', gap: 4 }}><Trophy size={10} /> BEST DEAL</span>}
+                {isFastest && !isBest && <span style={{ position: 'absolute', top: -10, left: 16, background: '#8025FB', color: '#fff', fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, display: 'flex', alignItems: 'center', gap: 4 }}><Zap size={10} /> FASTEST</span>}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                  <div style={{ width: 28, height: 28, borderRadius: 6, background: c.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 11, color: c.accent }}>{c.short}</div>
+                  <div style={{ width: 28, height: 28, borderRadius: 6, background: c.bg, border: `1.5px solid ${c.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 11, color: c.accent }}>{c.short}</div>
                   <span style={{ fontWeight: 600, fontSize: 13, color: '#374151' }}>{c.label}</span>
                 </div>
-                <div style={{ fontSize: 24, fontWeight: 800, color: isBest ? '#FF6B00' : '#111827' }}>₹{pt.total}</div>
+                <div style={{ fontSize: 26, fontWeight: 800, color: isBest ? c.accent : '#111827' }}>₹{pt.total}</div>
                 <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
                   {pt.allAvail ? `All ${cartItems.length} items available` : 'Some items unavailable'}
                 </div>
                 {isBest && platformTotals.length > 1 && (
-                  <div style={{ fontSize: 11, color: '#16a34a', fontWeight: 600, marginTop: 4 }}>
+                  <div style={{ fontSize: 11, color: c.accent, fontWeight: 700, marginTop: 6, background: `${c.accent}15`, borderRadius: 6, padding: '3px 8px', display: 'inline-block' }}>
                     Save ₹{platformTotals[platformTotals.length - 1].total - pt.total} vs highest
                   </div>
                 )}
@@ -209,20 +225,35 @@ export default function CartPage({ cartItems, onBack, onRemove }) {
         </div>
 
         {/* Smart Recommendation */}
-        <div style={{ background: 'linear-gradient(135deg,#FF6B00,#FF9A3C)', borderRadius: 16, padding: '20px 24px', color: '#fff', marginBottom: 24 }}>
-          <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>💡 Smart Shopping Tip</div>
-          <div style={{ fontSize: 14, opacity: 0.9, marginBottom: 16 }}>
-            Best deal: Buy everything from <strong>{PLATFORM_COLORS[platformTotals[0].platform].label}</strong> → ₹{platformTotals[0].total}
-            &nbsp;|&nbsp; Fastest: Buy from <strong>{PLATFORM_COLORS[fastestPlatform.platform].label}</strong> (all in {fastestPlatform.maxTime} mins)
-          </div>
-          {platformTotals[0].allAvail && (
-            <div style={{ display: 'inline-block', background: 'rgba(255,255,255,.2)', borderRadius: 8, padding: '6px 14px', fontSize: 13, fontWeight: 600 }}>
-              🏆 Best single-app total: ₹{platformTotals[0].total} on {PLATFORM_COLORS[platformTotals[0].platform].label}
+        <div style={{
+          background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
+          borderRadius: 16,
+          padding: '24px 28px',
+          color: '#fff',
+          marginBottom: 24,
+          position: 'relative',
+          overflow: 'hidden',
+        }}>
+          {/* Decorative glow */}
+          <div style={{ position: 'absolute', top: -30, right: -30, width: 120, height: 120, borderRadius: '50%', background: 'rgba(255,107,0,0.15)', filter: 'blur(40px)' }} />
+          <div style={{ position: 'relative' }}>
+            <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <ShoppingBag size={20} style={{ color: '#FF6B00' }} /> Smart Shopping Tip
             </div>
-          )}
-          <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85 }}>
-            🧠 Mix &amp; Match: Your custom selection costs <strong>₹{mixedTotal}</strong>
-            {smartTotal < mixedTotal && ` (max savings: ₹${smartTotal} picking best price per item)`}
+            <div style={{ fontSize: 14, opacity: 0.85, marginBottom: 16, lineHeight: 1.6 }}>
+              Best deal: Buy everything from <strong style={{ color: '#FFD700' }}>{PLATFORM_COLORS[platformTotals[0].platform].label}</strong> → <strong>₹{platformTotals[0].total}</strong>
+              &nbsp;|&nbsp; Fastest: <strong style={{ color: '#a78bfa' }}>{PLATFORM_COLORS[fastestPlatform.platform].label}</strong> (all in {fastestPlatform.maxTime} mins)
+            </div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              {platformTotals[0].allAvail && (
+                <div style={{ background: 'rgba(255,215,0,0.15)', border: '1px solid rgba(255,215,0,0.4)', borderRadius: 8, padding: '6px 14px', fontSize: 13, fontWeight: 600, color: '#FFD700' }}>
+                  🏆 Best total: ₹{platformTotals[0].total} on {PLATFORM_COLORS[platformTotals[0].platform].label}
+                </div>
+              )}
+              <div style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, padding: '6px 14px', fontSize: 13, fontWeight: 600, color: '#e5e7eb' }}>
+                🧠 Your mix: ₹{mixedTotal}{smartTotal < mixedTotal ? ` · max savings ₹${smartTotal}` : ''}
+              </div>
+            </div>
           </div>
         </div>
 

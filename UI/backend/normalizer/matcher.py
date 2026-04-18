@@ -116,7 +116,17 @@ def group_products(platform_results: Dict[str, List[dict]]) -> List[ProductResul
             if any(g["platform"] == other["platform"] for g in group):
                 continue
             score = fuzz.token_sort_ratio(item["normalized"], other["normalized"])
-            if score >= 75:
+            
+            # Optimization: Ensure core tokens from the shorter string are present in the longer one
+            # to prevent brand-mismatch groupings for similar products (e.g., Milk vs Silk)
+            item_tokens = set(item["normalized"].split())
+            other_tokens = set(other["normalized"].split())
+            intersection = item_tokens.intersection(other_tokens)
+            
+            # Token intersection must be at least 60% of both to consider grouping
+            token_match = len(intersection) >= (min(len(item_tokens), len(other_tokens)) * 0.6)
+
+            if score >= 85 and token_match:
                 group.append(other)
                 used.add(j)
         groups.append(group)

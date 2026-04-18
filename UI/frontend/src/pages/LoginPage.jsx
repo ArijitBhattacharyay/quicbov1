@@ -195,16 +195,6 @@ export default function LoginPage({ onLogin }) {
         <div style={{ textAlign: 'center', fontSize: 11, color: '#9ca3af', marginTop: 8 }}>Live prices from all major platforms</div>
       </div>
 
-      <style>{`
-        @keyframes floatBubble {
-          0%,100% { transform: translateY(0) scale(1); }
-          50% { transform: translateY(-20px) scale(1.05); }
-        }
-        @keyframes foodFloat {
-          0%,100% { transform: translateY(0) rotate(-5deg); opacity: 0.5; }
-          50% { transform: translateY(-15px) rotate(5deg); opacity: 0.8; }
-        }
-      `}</style>
     </div>
   );
 }

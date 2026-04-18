@@ -100,12 +100,13 @@ export default function ProductCard({ product, onAddToCart }) {
   const { name, image_url, quantity, best_offer, all_offers } = product;
 
   const bestPlatform = best_offer ? getPlatform(best_offer.platform) : null;
-
-  // All offers except the best one for the dropdown
   const otherOffers = all_offers || [];
+  const availableCount = otherOffers.filter(o => o.available).length;
+  const totalPlatforms = otherOffers.length;
+  const isUnavailable = !best_offer;
 
   return (
-    <div className="product-card">
+    <div className={`product-card${isUnavailable ? ' product-card--unavailable' : ''}`}>
       {/* Product Image */}
       <div className="product-card__image-wrap">
         <ProductImage imageUrl={image_url} name={name} emoji={product.emoji} />
@@ -124,7 +125,7 @@ export default function ProductCard({ product, onAddToCart }) {
         {/* Best Offer Section */}
         {best_offer ? (
           <div className="best-offer">
-            <p className="best-offer__label">Best Offer</p>
+            <p className="best-offer__label">⭐ Best Offer</p>
             <div className="best-offer__row">
               <div className="platform-badge">
                 <PlatformLogo platformId={best_offer.platform} size={22} />
@@ -141,7 +142,11 @@ export default function ProductCard({ product, onAddToCart }) {
         ) : (
           <div className="best-offer" style={{ background: '#fff5f5', borderColor: '#fecaca' }}>
             <p className="best-offer__label" style={{ color: '#ef4444' }}>Not Available</p>
-            <p style={{ fontSize: 12, color: '#ef4444' }}>No platforms have this in stock</p>
+            <p style={{ fontSize: 12, color: '#ef4444' }}>
+              {availableCount > 0
+                ? `Only ${availableCount}/${totalPlatforms} platforms have this`
+                : 'No platforms have this in stock'}
+            </p>
           </div>
         )}
 
