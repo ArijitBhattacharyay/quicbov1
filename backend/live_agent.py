@@ -13,8 +13,11 @@ Pattern follows grocery_agent.py (sync reference), translated to async Playwrigh
 
 import asyncio
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Optional
+import intelligence
+from intelligence import memory as selector_memory
 
 from playwright.async_api import Page, async_playwright, Browser, BrowserContext, Playwright
 
@@ -427,19 +430,34 @@ class BlinkitScraper:
         
         await _clear_overlays(self.page)
         print(f"[blinkit] search: {product}")
-        try:
-            await self.page.locator("a[href='/s/']").first.click(timeout=3000, force=True)
-            await self.page.wait_for_timeout(600)
-        except Exception: pass
-
+        
+        # 1. Try Learned Selector
+        learned_sel = selector_memory.get_selector("blinkit", "search_input")
         typed = False
-        for sel in ["input[placeholder*='atta dal']", "input[placeholder*='Search']", "input[type='search']"]:
+        if learned_sel:
             try:
-                el = self.page.locator(sel).first
-                if await el.is_visible(timeout=2000):
+                el = self.page.locator(learned_sel).first
+                if await el.is_visible(timeout=1000):
                     await el.click(click_count=3, force=True); await self.page.keyboard.press("Backspace")
-                    await el.type(product, delay=50); typed = True; break
+                    await el.type(product, delay=50); typed = True
+                    print("[Intelligence] Blinkit: used learned search selector ✓")
+            except: selector_memory.invalidate("blinkit", "search_input")
+
+        if not typed:
+            try:
+                await self.page.locator("a[href='/s/']").first.click(timeout=3000, force=True)
+                await self.page.wait_for_timeout(600)
             except Exception: pass
+
+            for sel in ["input[placeholder*='atta dal']", "input[placeholder*='Search']", "input[type='search']"]:
+                try:
+                    el = self.page.locator(sel).first
+                    if await el.is_visible(timeout=2000):
+                        await el.click(click_count=3, force=True); await self.page.keyboard.press("Backspace")
+                        await el.type(product, delay=50); typed = True; 
+                        selector_memory.learn("blinkit", "search_input", sel) # LEARN IT
+                        break
+                except Exception: pass
 
         if not typed:
             await self.page.goto(f"{self.BASE_URL}/s/?q={product.replace(' ', '%20')}", wait_until="domcontentloaded")
@@ -588,10 +606,18 @@ class ZeptoScraper:
     async def search(self, product: str) -> list[ProductResult]:
         captured_results = []
         async def handle_response(response):
-            if "/search" in response.url and response.status == 200:
+            # Intercept BFF/Search API
+            if any(k in response.url.lower() for k in ["/search", "bulk-widget-data", "inventory/search"]) and response.status == 200:
                 try:
                     data = await response.json()
-                    for p in data.get("products", []):
+                    products = []
+                    # Handle both flat list and widget-based data
+                    items = data.get("products", [])
+                    if not items and "widgets" in data:
+                        for w in data["widgets"]:
+                            if w.get("type") == "PRODUCT_GRID": items.extend(w.get("data", {}).get("products", []))
+                    
+                    for p in items:
                         captured_results.append(ProductResult(
                             name=p.get("name", "—"),
                             weight=p.get("pack_size", "—"),
@@ -607,21 +633,36 @@ class ZeptoScraper:
 
         self.page.on("response", handle_response)
         print(f"[zepto] search: {product}")
-        for trigger_sel in ["a[href*='/search']", "div[class*='Search']", "[data-testid='search-container']"]:
-            try:
-                el = self.page.locator(trigger_sel).first
-                if await el.is_visible(timeout=1000):
-                    await el.click(force=True); await self.page.wait_for_timeout(800); break
-            except Exception: pass
-
+        
+        # 1. Try Learned Selector
+        learned_sel = selector_memory.get_selector("zepto", "search_input")
         typed = False
-        for sel in ["input[placeholder*='Search']", "input[type='search']", "[data-testid='search-input']"]:
+        if learned_sel:
             try:
-                el = self.page.locator(sel).first
-                if await el.is_visible(timeout=2000):
+                el = self.page.locator(learned_sel).first
+                if await el.is_visible(timeout=1000):
                     await el.click(click_count=3, force=True); await self.page.keyboard.press("Backspace")
-                    await el.type(product, delay=50); typed = True; break
-            except Exception: pass
+                    await el.type(product, delay=50); typed = True
+                    print("[Intelligence] Zepto: used learned search selector ✓")
+            except: selector_memory.invalidate("zepto", "search_input")
+
+        if not typed:
+            for trigger_sel in ["a[href*='/search']", "div[class*='Search']", "[data-testid='search-container']"]:
+                try:
+                    el = self.page.locator(trigger_sel).first
+                    if await el.is_visible(timeout=1000):
+                        await el.click(force=True); await self.page.wait_for_timeout(800); break
+                except Exception: pass
+
+            for sel in ["input[placeholder*='Search']", "input[type='search']", "[data-testid='search-input']"]:
+                try:
+                    el = self.page.locator(sel).first
+                    if await el.is_visible(timeout=2000):
+                        await el.click(click_count=3, force=True); await self.page.keyboard.press("Backspace")
+                        await el.type(product, delay=50); typed = True;
+                        selector_memory.learn("zepto", "search_input", sel) # LEARN IT
+                        break
+                except Exception: pass
 
         if not typed:
             await self.page.goto(f"{self.BASE_URL}/search?query={product.replace(' ', '+')}", wait_until="domcontentloaded")
@@ -638,7 +679,7 @@ class ZeptoScraper:
     async def _extract(self) -> list[ProductResult]:
         products = []
         cards = None
-        for sel in ["a[href^='/pn/']", "[data-testid='product-card']"]:
+        for sel in ["a.B4vNQ", "a[href^='/pn/']", "[data-testid='product-card']"]:
             try:
                 found = self.page.locator(sel)
                 if await found.count() > 0:
@@ -752,21 +793,35 @@ class BigBasketScraper:
     async def search(self, product: str) -> list[ProductResult]:
         print(f"[bigbasket] search: {product}")
         await _clear_overlays(self.page)
-        for sel in [
-            "input[placeholder*='Search']",
-            "input[type='text'][id='input']",
-            "input[qa='searchBar']",
-        ]:
+        typed = False
+        # 1. Try Learned Selector
+        learned_sel = selector_memory.get_selector("bigbasket", "search_input")
+        if learned_sel:
             try:
-                el = self.page.locator(sel).first
-                if await el.is_visible(timeout=2000):
-                    await el.click(click_count=3, force=True)
-                    await self.page.keyboard.press("Backspace")
-                    await el.type(product, delay=50)
-                    typed = True
-                    break
-            except Exception:
-                pass
+                el = self.page.locator(learned_sel).first
+                if await el.is_visible(timeout=1000):
+                    await el.click(click_count=3, force=True); await self.page.keyboard.press("Backspace")
+                    await el.type(product, delay=50); typed = True
+                    print("[Intelligence] BigBasket: used learned search selector ✓")
+            except: selector_memory.invalidate("bigbasket", "search_input")
+
+        if not typed:
+            for sel in [
+                "input[placeholder*='Search']",
+                "input[type='text'][id='input']",
+                "input[qa='searchBar']",
+            ]:
+                try:
+                    el = self.page.locator(sel).first
+                    if await el.is_visible(timeout=2000):
+                        await el.click(click_count=3, force=True)
+                        await self.page.keyboard.press("Backspace")
+                        await el.type(product, delay=50)
+                        typed = True
+                        selector_memory.learn("bigbasket", "search_input", sel) # LEARN IT
+                        break
+                except Exception:
+                    pass
 
         if not typed:
             await self.page.goto(
@@ -792,9 +847,10 @@ class BigBasketScraper:
         products = []
         cards = None
         for sel in [
+            "li[class*='PaginateItems']",
+            "li.PaginateItems___StyledLi-sc-179z17s-0",
             "div[class*='SKUDeck___StyledDiv']",
             "a[href^='/pd/']",
-            "li[class*='PaginateItems']",
         ]:
             try:
                 found = self.page.locator(sel)
