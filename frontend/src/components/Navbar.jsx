@@ -1,20 +1,33 @@
-import { useRef } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { MapPin, ChevronDown, Search, User } from 'lucide-react';
 
-export default function Navbar({ pincode, location, onLocationClick, onSearch, onLoginClick }) {
+export default function Navbar({ pincode, location, onLocationClick, onLogoClick, onSearch, onLoginClick }) {
   const inputRef = useRef(null);
+  const navRef = useRef(null);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
 
   const handleSubmit = (e) => {
     e.preventDefault();
     const query = inputRef.current?.value?.trim();
-    if (query) onSearch(query);
+    if (query) {
+      onSearch(query);
+      inputRef.current.value = '';
+    }
   };
 
   const displayLocation = location || (pincode ? pincode : 'Select Location');
 
   return (
-    <nav className="navbar">
-      <span className="navbar__logo">quicbo</span>
+    <nav ref={navRef} className={`navbar${scrolled ? ' scrolled' : ''}`}>
+      <button className="navbar__logo" onClick={onLogoClick} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+        quicbo
+      </button>
       <div className="divider" />
 
       <button className="navbar__location" onClick={onLocationClick}>
@@ -44,7 +57,12 @@ export default function Navbar({ pincode, location, onLocationClick, onSearch, o
         </button>
       </form>
 
-      <button className="navbar__profile" onClick={onLoginClick} aria-label="Profile" style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#e5e7eb', borderRadius: '20px', padding: '6px 12px', fontSize: '14px', fontWeight: 'bold', color: '#111827', cursor: 'pointer', border: 'none' }}>
+      <button
+        className="navbar__profile"
+        onClick={onLoginClick}
+        aria-label="Profile"
+        style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#e5e7eb', borderRadius: '20px', padding: '6px 12px', fontSize: '14px', fontWeight: 'bold', color: '#111827', cursor: 'pointer', border: 'none' }}
+      >
         <User size={16} /> Login
       </button>
     </nav>

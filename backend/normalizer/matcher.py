@@ -64,8 +64,26 @@ def extract_quantity(name: str) -> str:
     """Extract quantity from product name."""
     match = re.search(r'(\d+\.?\d*\s*(kg|g|gm|gms|l|ltr|litre|ml|pc|pcs|pkt))', name, re.IGNORECASE)
     if match:
-        return match.group(0).strip()
+        return match.group(0).strip().lower()
     return ""
+
+
+def normalize_quantity_value(quantity_str: str) -> float:
+    """Convert quantity (e.g. 1kg, 500g) to a standardized numerical value (base units like grams, ml)."""
+    if not quantity_str: return 0.0
+    match = re.search(r'(\d+\.?\d*)\s*([a-z]+)', quantity_str.lower())
+    if not match: return 0.0
+    
+    val = float(match.group(1))
+    unit = match.group(2)
+    
+    # Normalize units to base (gm, ml, pc)
+    if unit in ['kg', 'kgs', 'kilogram', 'kilograms']: val *= 1000
+    elif unit in ['l', 'ltr', 'litre', 'litres', 'liter']: val *= 1000
+    elif unit in ['g', 'gm', 'gms', 'gram', 'grams']: pass # already gm
+    elif unit in ['ml', 'milliliter', 'milliliters']: pass # already ml
+    
+    return val
 
 
 def group_products(platform_results: Dict[str, List[dict]]) -> List[ProductResult]:
@@ -116,7 +134,38 @@ def group_products(platform_results: Dict[str, List[dict]]) -> List[ProductResul
             if any(g["platform"] == other["platform"] for g in group):
                 continue
             score = fuzz.token_sort_ratio(item["normalized"], other["normalized"])
-            if score >= 75:
+            
+            # Optimization: Ensure core tokens from the shorter string are present in the longer one
+            # to prevent brand-mismatch groupings for similar products (e.g., Milk vs Silk)
+            item_tokens = set(item["normalized"].split())
+            other_tokens = set(other["normalized"].split())
+            intersection = item_tokens.intersection(other_tokens)
+            
+            # Word count check: Difference in word count should not exceed 2
+            word_diff = abs(len(item_tokens) - len(other_tokens))
+            
+            # Token intersection must be at least 60% of both to consider grouping
+            token_match = len(intersection) >= (min(len(item_tokens), len(other_tokens)) * 0.6)
+
+            # New Accuracy Guards:
+            # 1. Price Outlier Guard: Prevent grouping if prices are wildly different (e.g. single item vs case)
+            p1 = item.get("price", 0)
+            p2 = other.get("price", 0)
+            price_mismatch = False
+            if p1 > 0 and p2 > 0:
+                ratio = max(p1, p2) / min(p1, p2)
+                if ratio > 1.6: # More than 60% price difference is suspicious for same item
+                    price_mismatch = True
+
+            # 2. Strict Quantity Guard: Verify normalized quantity values match
+            q1 = normalize_quantity_value(item["quantity"])
+            q2 = normalize_quantity_value(other["quantity"])
+            quantity_mismatch = False
+            if q1 > 0 and q2 > 0:
+                if q1 != q2:
+                    quantity_mismatch = True
+
+            if score >= 90 and token_match and word_diff <= 2 and not price_mismatch and not quantity_mismatch:
                 group.append(other)
                 used.add(j)
         groups.append(group)

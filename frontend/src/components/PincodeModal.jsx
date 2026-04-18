@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { MapPin, X } from 'lucide-react';
 import { getPincodeInfo } from '../api';
 
@@ -7,6 +7,13 @@ export default function PincodeModal({ currentPincode, onConfirm, onClose }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [locationResult, setLocationResult] = useState(null);
+
+  // Close on Escape key
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [onClose]);
 
   const handleLookup = async () => {
     const val = input.trim();

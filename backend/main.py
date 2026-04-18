@@ -1,9 +1,10 @@
 """
-Quicbo Backend — FastAPI with Mock Data + Hardcoded Real Product Images
+Quicbo Backend — FastAPI with Live Scraping + Mock Fallback
 """
 import uuid
 import httpx
 import asyncio
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -11,7 +12,14 @@ from rapidfuzz import fuzz
 import time
 import live_agent
 
-app = FastAPI(title="Quicbo API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Start persistent browsers on boot, shut them down gracefully."""
+    await live_agent.startup()
+    yield
+    await live_agent.shutdown()
+
+app = FastAPI(title="Quicbo API", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -661,6 +669,95 @@ async def get_pincode(pincode: str):
     return await resolve_pincode(pincode)
 
 
+@app.get("/api/reverse-geocode")
+async def reverse_geocode(lat: float = Query(...), lng: float = Query(...)):
+    """Reverse-geocode lat/lng → Indian pincode using BigDataCloud (free, no API key)."""
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(
+                "https://api.bigdatacloud.net/data/reverse-geocode-client",
+                params={"latitude": lat, "longitude": lng, "localityLanguage": "en"}
+            )
+            data = r.json()
+            postcode = data.get("postcode", "")
+            city = data.get("city", "") or data.get("locality", "")
+            state = ""
+            for admin in data.get("localityInfo", {}).get("administrative", []):
+                if admin.get("order") == 4:
+                    state = admin.get("name", "")
+            district = ""
+            for admin in data.get("localityInfo", {}).get("administrative", []):
+                if admin.get("order") == 6:
+                    district = admin.get("name", "")
+
+            if postcode and len(postcode) == 6 and postcode.isdigit():
+                label = f"{city or district} {postcode}".strip()
+                result = {
+                    "pincode": postcode,
+                    "city": city,
+                    "district": district,
+                    "state": state,
+                    "full_label": label,
+                }
+                # Also cache it in _pin_cache for later resolve_pincode calls
+                _pin_cache[postcode] = result
+                print(f"[reverse-geocode] BigDataCloud: {lat},{lng} → {label}")
+                return result
+    except Exception as e:
+        print(f"[reverse-geocode] BigDataCloud error: {e}")
+
+    # Fallback to Nominatim (OpenStreetMap)
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            print(f"[reverse-geocode] Using Nominatim fallback for {lat},{lng}...")
+            r = await client.get(
+                "https://nominatim.openstreetmap.org/reverse",
+                params={"format": "json", "lat": lat, "lon": lng},
+                headers={"User-Agent": "QuicboApp/1.0 (contact@quicbo.in)"}
+            )
+            data = r.json()
+            address = data.get("address", {})
+            postcode = address.get("postcode", "").replace(" ", "")
+            city = address.get("city", "") or address.get("town", "") or address.get("village", "")
+            district = address.get("state_district", "").replace(" District", "")
+            state = address.get("state", "")
+
+            if postcode and len(postcode) == 6 and postcode.isdigit():
+                label = f"{city or district} {postcode}".strip()
+                result = {
+                    "pincode": postcode,
+                    "city": city,
+                    "district": district,
+                    "state": state,
+                    "full_label": label,
+                }
+                _pin_cache[postcode] = result
+                print(f"[reverse-geocode] Nominatim: {lat},{lng} → {label}")
+                return result
+    except Exception as e:
+        print(f"[reverse-geocode] Nominatim error: {e}")
+
+    raise HTTPException(400, "Could not determine pincode from coordinates")
+
+
+@app.post("/api/prewarm")
+async def prewarm_endpoint(pincode: str = Query(..., min_length=6, max_length=6)):
+    """
+    Pre-warm: sets delivery location on all 4 platform browsers in parallel.
+    Call this immediately when the user confirms their pincode in the UI.
+    Subsequent /api/search calls will skip set_location → much faster.
+    """
+    if not pincode.isdigit():
+        raise HTTPException(400, "Pincode must be numeric")
+    try:
+        loc = await asyncio.wait_for(resolve_pincode(pincode), timeout=1.0)
+    except Exception:
+        loc = {"full_label": pincode}
+    # Fire-and-forget is fine — but we wait so the client knows when it's done
+    status = await live_agent.prewarm_location(pincode)
+    return {"pincode": pincode, "location": loc.get("full_label", pincode), "status": status}
+
+
 @app.get("/api/search")
 async def search_api(
     q: str = Query(..., min_length=1),
@@ -683,7 +780,14 @@ async def search_api(
 
     # ── LIVE SCRAPING (ACCURATE DATA) ──
     print(f"[LIVE SEARCH] Running 4 scrapers for: {q} at {pincode}")
-    reports = await live_agent.run_all_parallel(pincode, q)
+    try:
+        reports = await asyncio.wait_for(
+            live_agent.run_all_parallel(pincode, q),
+            timeout=120  # 2-min hard cap
+        )
+    except asyncio.TimeoutError:
+        print("[LIVE SEARCH] Timed out — falling back to mock data")
+        reports = []
     
     import re
     def normalize_weight(w: str) -> str:
@@ -705,11 +809,7 @@ async def search_api(
             matched = False
             for g in grouped_products:
                 g_weight_norm = normalize_weight(g["quantity"])
-                
-                # If either weight is unknown/fallback, or if they match exactly
-                weight_match = (g_weight_norm == "—" or p_weight_norm == "—" or g_weight_norm == p_weight_norm)
-                
-                if fuzz.token_set_ratio(g["name"].lower(), p.name.lower()) > 75 and weight_match:
+                if fuzz.token_set_ratio(g["name"].lower(), p.name.lower()) > 85 and g_weight_norm == p_weight_norm:
                     g["platforms"][plat_lower] = {
                         "price": p.price,
                         "delivery": p.delivery_time,
