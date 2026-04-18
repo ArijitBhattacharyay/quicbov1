@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev:frontend": "cd frontend && npm run dev",
-    "dev:backend": "cd backend && python3 -m uvicorn main:app --reload",
-    "build:frontend": "cd frontend && npm install && npm run build"
+    "dev:backend": "cd api && python3 -m uvicorn index:app --reload",
+    "build": "cd frontend && npm install && npm run build",
+    "install-backend": "pip install -r api/requirements.txt"
   }
 }
