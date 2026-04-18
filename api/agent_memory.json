@@ -1,5 +1,8 @@
 {
   "blinkit": {
     "search_input": "input[placeholder*='atta dal']"
+  },
+  "zepto": {
+    "search_input": "input[placeholder*='Search']"
   }
 }

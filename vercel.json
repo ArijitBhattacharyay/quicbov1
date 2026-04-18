@@ -14,7 +14,7 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "api/index.py"
+      "destination": "https://quicbo-backend.up.railway.app/api/$1"
     },
     {
       "source": "/(.*)",
